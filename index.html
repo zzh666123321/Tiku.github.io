@@ -98,6 +98,37 @@ textarea:focus{border-color:var(--pri); background:#fff;}
 .tip{font-size:13px; background:var(--warn-l); color:#7a4a00; border-radius:8px; padding:9px 13px; margin-top:14px;}
 .hidden{display:none!important;}
 footer{text-align:center; font-size:12px; color:#9aa4b2; padding:20px;}
+
+/* ================= 即时判题 ================= */
+.setbar{display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:0 0 12px;}
+.sw{display:inline-flex; align-items:center; gap:8px; background:#fff; border:1px solid var(--line);
+  border-radius:9px; padding:5px 12px 5px 10px; font-size:13px; cursor:pointer; user-select:none;
+  transition:.15s;}
+.sw:hover{border-color:#a8c6e8;}
+.sw input{-webkit-appearance:none; appearance:none; width:34px; height:19px; border-radius:19px;
+  background:#cbd5e1; position:relative; margin:0; cursor:pointer; transition:.18s;
+  flex:0 0 auto; outline:none; border:0;}
+.sw input::after{content:''; position:absolute; top:2px; left:2px; width:15px; height:15px;
+  border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.28); transition:.18s;}
+.sw input:checked{background:var(--pri);}
+.sw input:checked::after{left:17px;}
+.sw span{color:var(--sub);}
+.sw input:checked + span{color:var(--pri); font-weight:600;}
+.setbar .tip2{font-size:12px; color:#8b95a3;}
+
+.fb{font-size:12px; font-weight:600; padding:2px 9px; border-radius:20px;
+  margin-left:auto; white-space:nowrap;}
+.q .qh{flex-wrap:wrap;}
+.fb.right{color:var(--ok); background:var(--ok-l);}
+.fb.wrong{color:var(--err); background:var(--err-l);}
+
+.opt.right .txt{color:#0a6b4a; font-weight:600;}
+.opt.miss{background:#fdecec; border-color:#e8a1a4;}
+.opt.miss .tag{background:var(--err); color:#fff;}
+.opt.miss .txt{color:#a01b1f; font-weight:600;}
+.q.locked .opt{pointer-events:none;}
+.q .check,.q .redo{margin-top:9px; padding:6px 12px;}
+.q .redo{color:#8b95a3;}
 /* ================= 手机端适配 ================= */
 @media (max-width: 640px){
   html{-webkit-text-size-adjust:100%;}
@@ -154,6 +185,12 @@ footer{text-align:center; font-size:12px; color:#9aa4b2; padding:20px;}
   .opt .txt{overflow-wrap:anywhere; word-break:break-word;}
   .opt .tag{width:20px; height:20px; font-size:12px;}
 
+  .setbar{padding:0 0 10px; gap:8px;}
+  .sw{padding:6px 11px; font-size:12.5px;}
+  .setbar .tip2{font-size:11.5px; line-height:1.5;}
+  .fb{font-size:11px; padding:2px 8px;}
+  .q .check,.q .redo{margin-top:10px; min-height:36px;}
+
   textarea{font-size:16px; min-height:130px; padding:10px 11px;}
   button.ghost{font-size:12.5px; padding:7px 4px; margin-top:8px; min-height:36px;}
 
@@ -174,7 +211,7 @@ footer{text-align:center; font-size:12px; color:#9aa4b2; padding:20px;}
   .timer{font-size:14px;}
 }
 @media print{
-  header.bar,.progress,.tabs,button,.tip{display:none!important;}
+  header.bar,.progress,.tabs,.setbar,button,.tip,.fb{display:none!important;}
   body{background:#fff; font-size:12pt;}
   .ans{display:block!important;}
   .q{break-inside:avoid; border-color:#ddd;}
@@ -199,6 +236,10 @@ footer{text-align:center; font-size:12px; color:#9aa4b2; padding:20px;}
 
 <main>
   <div class="tabs" id="tabs"></div>
+  <div class="setbar">
+    <label class="sw"><input type="checkbox" id="chkInstant" checked><span>即时判题</span></label>
+    <span class="tip2">选完立即出对错与解析；多选题勾选后点「确认作答」</span>
+  </div>
   <div id="paper"></div>
   <div id="result" class="result hidden"></div>
 </main>
@@ -1274,7 +1315,10 @@ const S = {};
 
 function st(k){
   if(!S[k]) S[k] = {answers:{}, essays:{}, submitted:false, showAll:false, left:3600};
-  return S[k];
+  const s = S[k];
+  if(!s.judged) s.judged = {};              // 已即时判题的题号 → 'right' / 'wrong'
+  if(s.instant === undefined) s.instant = true;
+  return s;
 }
 function save(){
   try{ localStorage.setItem(SKEY, JSON.stringify({cur, S})); }catch(e){}
@@ -1350,6 +1394,10 @@ function itemHTML(entry, no, s){
       return `<div class="opt${on}" data-id="${id}" data-i="${i}" data-type="${entry.type}">
         <span class="tag">${L[i]}</span><span class="txt">${esc(o)}</span></div>`;
     }).join('') + '</div>';
+    if(entry.type === 'multi'){
+      body += `<button class="ghost check" data-id="${id}" style="display:none">确认作答</button>`;
+    }
+    body += `<button class="ghost redo" data-id="${id}" style="display:none">重做本题</button>`;
   }
   const typeName = {single:'单选题', multi:'多选题', judge:'判断题', essay:'简答题'}[entry.type];
   return `<div class="q" data-qid="${id}">
@@ -1384,12 +1432,9 @@ function render(){
   });
   document.getElementById('paper').innerHTML = html;
 
-  if(s.showAll){
-    document.querySelectorAll('.q').forEach(q=>{
-      q.classList.add('show');
-      markOne(q, q.dataset.qid, true);
-    });
-  }
+  document.getElementById('chkInstant').checked = !!s.instant;
+  items.forEach(x => paintQ(x.id));          // 还原已判题的对错着色与解析
+  if(s.showAll) document.querySelectorAll('.q').forEach(q => q.classList.add('show'));
   document.getElementById('btnToggle').textContent = s.showAll ? '隐藏答案' : '显示答案';
   document.getElementById('result').classList.add('hidden');
   if(s.submitted) renderResult(false, true);
@@ -1401,8 +1446,25 @@ function render(){
 /* ============ 交互 ============ */
 document.getElementById('paper').addEventListener('click', e=>{
   const s = st(cur);
+
+  // 重做本题：清掉该题的作答与判定
+  const redo = e.target.closest('.redo');
+  if(redo && !s.submitted){
+    const rid = redo.dataset.id;
+    const re = items.find(x => x.id === rid);
+    delete s.judged[rid];
+    if(re && re.type === 'multi') s.answers[rid] = [];
+    else delete s.answers[rid];
+    save(); paintQ(rid); updateProgress(); renderTabs();
+    return;
+  }
+
+  // 多选题：确认作答后判题
+  const chk = e.target.closest('.check');
+  if(chk && !s.submitted){ judgeOne(chk.dataset.id); return; }
+
   const opt = e.target.closest('.opt');
-  if(opt && !s.submitted){
+  if(opt && !s.submitted && !s.judged[opt.dataset.id]){
     const id = opt.dataset.id, i = +opt.dataset.i, type = opt.dataset.type;
     if(type === 'multi'){
       let arr = s.answers[id] || [];
@@ -1416,10 +1478,10 @@ document.getElementById('paper').addEventListener('click', e=>{
     }
     save(); updateProgress(); renderTabs();
     if(s.showAll){
-      const q = document.querySelector('.q[data-qid="' + id + '"]');
-      q.classList.remove('right','wrong');
-      q.querySelectorAll('.opt').forEach(o => o.classList.remove('right'));
-      markOne(q, id, true);
+      paintQ(id);
+    }else if(s.instant){
+      if(type === 'multi') paintQ(id);   // 只显示「确认作答」按钮，不提前判
+      else judgeOne(id);                 // 单选/判断：选完立刻出结果
     }
     return;
   }
@@ -1458,15 +1520,63 @@ function isRight(entry){
   return a === ans;
 }
 
-function markOne(qEl, id, paint){
+/* 即时判题：判定单题并刷新该题的所有视觉状态 */
+function judgeOne(id){
   const entry = items.find(x => x.id === id);
-  if(!entry || entry.type === 'essay' || !qEl) return;
+  const s = st(cur);
+  if(!entry || entry.type === 'essay' || s.judged[id] || s.submitted) return;
+  const a = s.answers[id];
+  const has = entry.type === 'multi' ? !!(a && a.length) : (a !== undefined);
+  if(!has) return;
+  s.judged[id] = isRight(entry) ? 'right' : 'wrong';
+  save();
+  paintQ(id);
+  updateProgress();
+  renderTabs();
+}
+
+/* 按状态重绘单题：选项对错着色、判定徽标、解析展开、按钮显隐 */
+function paintQ(id){
+  const entry = items.find(x => x.id === id);
+  const q = document.querySelector('.q[data-qid="' + id + '"]');
+  if(!entry || !q) return;
+  const s = st(cur);
+  if(entry.type === 'essay') return;
+
+  const judged = s.judged[id];
+  const reveal = !!(s.showAll || s.submitted || judged);
+  const correct = judged ? judged === 'right' : (s.submitted ? isRight(entry) : null);
+
+  q.classList.toggle('show', reveal);
+  q.classList.toggle('right', correct === true);
+  q.classList.toggle('wrong', correct === false);
+  q.classList.toggle('locked', !!(judged || s.submitted));
+
   const ansArr = Array.isArray(entry.item.a) ? entry.item.a : [entry.item.a];
-  qEl.classList.add('show');
-  qEl.querySelectorAll('.opt').forEach(o=>{
-    if(ansArr.indexOf(+o.dataset.i) > -1 && paint) o.classList.add('right');
+  const picked = s.answers[id];
+  q.querySelectorAll('.opt').forEach(o=>{
+    const i = +o.dataset.i;
+    const sel = entry.type === 'multi' ? !!(picked && picked.indexOf(i) > -1) : picked === i;
+    const isAns = ansArr.indexOf(i) > -1;
+    o.classList.toggle('on', sel && !reveal);
+    o.classList.toggle('right', reveal && isAns);
+    o.classList.toggle('miss', !!judged && sel && !isAns);
   });
-  qEl.classList.add(isRight(entry) ? 'right' : 'wrong');
+
+  const qh = q.querySelector('.qh');
+  let fb = q.querySelector('.fb');
+  if(judged){
+    if(!fb){ fb = document.createElement('span'); qh.appendChild(fb); }
+    fb.className = 'fb ' + judged;
+    fb.textContent = judged === 'right'
+      ? '✓ 回答正确'
+      : '✗ 回答错误 · 正确答案 ' + ansText(entry.item, entry.type);
+  }else if(fb){ fb.remove(); }
+
+  const chk = q.querySelector('.check');
+  if(chk) chk.style.display = (s.instant && !reveal && picked && picked.length) ? '' : 'none';
+  const redo = q.querySelector('.redo');
+  if(redo) redo.style.display = (judged && !s.submitted) ? '' : 'none';
 }
 
 function updateProgress(){
@@ -1513,18 +1623,23 @@ document.getElementById('btnToggle').addEventListener('click', function(){
   const s = st(cur);
   s.showAll = !s.showAll;
   this.textContent = s.showAll ? '隐藏答案' : '显示答案';
+  items.forEach(x => { if(x.type !== 'essay') paintQ(x.id); });
   document.querySelectorAll('.q').forEach(q=>{
-    if(s.showAll){
-      q.classList.add('show');
-      markOne(q, q.dataset.qid, true);
-    }else{
-      q.classList.remove('show','wrong','right');
-      q.querySelectorAll('.opt').forEach(o => o.classList.remove('right'));
-      const b = q.querySelector('.showref');
-      if(b) b.style.display = '';
-    }
+    const en = items.find(x => x.id === q.dataset.qid);
+    if(!en || en.type !== 'essay') return;
+    q.classList.toggle('show', s.showAll);
+    const b = q.querySelector('.showref');
+    if(b) b.style.display = s.showAll ? 'none' : '';
   });
   save();
+});
+
+/* ============ 即时判题开关 ============ */
+document.getElementById('chkInstant').addEventListener('change', function(){
+  const s = st(cur);
+  s.instant = this.checked;
+  save();
+  items.forEach(x => { if(x.type !== 'essay') paintQ(x.id); });
 });
 
 /* ============ 交卷 ============ */
@@ -1549,8 +1664,8 @@ function renderResult(auto, restored){
     }else{
       wrongs.push({no: idx + 1, ans: ansText(entry.item, entry.type), q: entry.item.q});
     }
-    markOne(document.querySelector('.q[data-qid="' + entry.id + '"]'), entry.id, true);
   });
+  items.forEach(x => paintQ(x.id));
 
   const objFull = gFull + sFull;
   const box = document.getElementById('result');
